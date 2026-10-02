@@ -492,7 +492,7 @@ st.write("Standarisasi format (Cluster/Subfeeder/Feeder), pembersihan spasi, dan
 tipe_kmz = st.selectbox("📌 Pilih Tipe Format KMZ:", ["Cluster", "Subfeeder", "Feeder"])
 
 st.markdown("---")
-st.subheader("✏️ Fitur Multi Rename Massal (Find & Replace 4 Kata)")
+st.subheader("✏️ Fitur Multi Rename Massal (Find & Replace)")
 st.write("Masukkan teks lama yang ingin dicari dan teks penggantinya pada 4 slot di bawah ini secara bersamaan:")
 
 # Membuat 4 kolom pasangan Find & Replace
