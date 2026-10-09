@@ -18,7 +18,7 @@ def hex_to_kml_color(hex_color):
         return f"ff{b}{g}{r}".lower()
     return hex_color
 
-def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, list_rename):
+def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, list_rename):
     # ==========================================
     # 1. KONFIGURASI FOLDER STANDAR BERDASARKAN TIPE
     # ==========================================
@@ -313,9 +313,8 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, list_rename):
             nama_placemark = nama_placemark_elem.text.upper() if nama_placemark_elem is not None and nama_placemark_elem.text else ""
             style_ref = None
 
-            # --- LOGIKA KHUSUS FOLDER CABLE (STANDARISASI NAMA DAN WARNA GARIS) ---
+            # Standarisasi Placemark Kabel
             if "CABLE" in kategori_efektif:
-                # Menentukan konfigurasi core berdasarkan teks nama kabel / type icon
                 if any(x in nama_placemark for x in ["288C", "288 CORE", "288"]):
                     if nama_placemark_elem is not None:
                         nama_placemark_elem.text = "FO 288C/24T"
@@ -463,4 +462,138 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, list_rename):
                         placemark_copy.remove(elem_to_remove)
 
                 nama_elem = placemark_copy.find('kml:name', ns)
-                if nama_elem is None: nama_elem = placemark_copy.find
+                if nama_elem is None: nama_elem = placemark_copy.find('name')
+                if nama_elem is None: nama_elem = ET.SubElement(placemark_copy, '{%s}name' % namespace_kml)
+                nama_elem.text = "EXT.SLACK.FDT"
+
+                style_url_elem = ET.SubElement(placemark_copy, '{%s}styleUrl' % namespace_kml)
+                style_url_elem.text = "#shared_style_slack_hanger_copy"
+                
+                list_placemark_template.append(placemark_copy)
+
+    if list_placemark_template:
+        berhasil_paste = False
+        for folder_induk in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
+            nama_induk = folder_induk.find('kml:name', ns)
+            if nama_induk is None: nama_induk = folder_induk.find('name')
+            if nama_induk is not None and nama_induk.text and nama_induk.text.strip().upper().startswith("LINE"):
+                for folder_anak in folder_induk.findall('./kml:Folder', ns) + folder_induk.findall('./Folder'):
+                    nama_anak = folder_anak.find('kml:name', ns)
+                    if nama_anak is None: nama_anak = folder_anak.find('name')
+                    if nama_anak is not None and nama_anak.text and nama_anak.text.strip().upper() == "SLACK HANGER":
+                        for p_template in list_placemark_template:
+                            folder_anak.append(copy.deepcopy(p_template))
+                        berhasil_paste = True
+                        break
+            if berhasil_paste: break
+
+    # ==========================================
+    # 6. PEMBERSIHAN FOLDER KOSONG (KHUSUS PRE ABD / ABD)
+    # ==========================================
+    if format_tahapan == "PRE ABD / ABD":
+        def bersihkan_folder_kosong(elemen):
+            # Cek anak Folder secara rekursif
+            anak_folder = [e for e in elemen if e.tag.split('}')[-1] == 'Folder']
+            for f in anak_folder:
+                bersihkan_folder_kosong(f)
+                
+                # Cek apakah folder tersebut punya Placemark, GroundOverlay, NetworkLink, atau Subfolder
+                punya_placemark = len(f.findall('.//{%s}Placemark' % namespace_kml) + f.findall('.//Placemark')) > 0
+                punya_subfolder = any(sub.tag.split('}')[-1] == 'Folder' for sub in f)
+                punya_konten_lain = any(sub.tag.split('}')[-1] in ['GroundOverlay', 'NetworkLink', 'ScreenOverlay'] for sub in f)
+                
+                if not (punya_placemark or punya_subfolder or punya_konten_lain):
+                    elemen.remove(f)
+
+        bersihkan_folder_kosong(root)
+
+    tree.write(file_kml, encoding='utf-8', xml_declaration=True)
+
+    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as new_kmz:
+        for root_dir, dirs, files in os.walk(extract_dir):
+            for file in files:
+                file_path = os.path.join(root_dir, file)
+                arcname = os.path.relpath(file_path, extract_dir)
+                new_kmz.write(file_path, arcname)
+
+# ==========================================
+# ANTARMUKA WEB (STREAMLIT)
+# ==========================================
+st.set_page_config(page_title="Universal KMZ Formatter", page_icon="🌍")
+
+st.title("🌍 Universal KMZ Auto-Formatter & Multi-Renamer")
+st.write("Standarisasi format Cluster/Subfeeder/Feeder, penamaan FO Cable, Multi Rename, dan opsi filter folder kosong.")
+
+col_pilihan1, col_pilihan2 = st.columns(2)
+with col_pilihan1:
+    tipe_kmz = st.selectbox("📌 Tipe KMZ:", ["Cluster", "Subfeeder", "Feeder"])
+with col_pilihan2:
+    format_tahapan = st.selectbox("📂 Format Tahapan KMZ:", ["APD", "PRE ABD / ABD"])
+
+if format_tahapan == "PRE ABD / ABD":
+    st.caption("ℹ️ Mode PRE ABD / ABD aktif: Semua folder standar yang tidak memiliki objek/placemark akan otomatis dihapus.")
+
+st.markdown("---")
+st.subheader("✏️ Fitur Multi Rename Massal (Find & Replace)")
+st.write("Masukkan teks lama yang ingin dicari dan teks penggantinya pada 4 slot di bawah ini secara bersamaan:")
+
+col1, col2 = st.columns(2)
+with col1:
+    cari1 = st.text_input("Cari Teks 1", placeholder="Contoh: ABCD")
+    cari2 = st.text_input("Cari Teks 2", placeholder="")
+    cari3 = st.text_input("Cari Teks 3", placeholder="")
+    cari4 = st.text_input("Cari Teks 4", placeholder="")
+
+with col2:
+    ganti1 = st.text_input("Ganti Menjadi 1", placeholder="Contoh: ABCE")
+    ganti2 = st.text_input("Ganti Menjadi 2", placeholder="")
+    ganti3 = st.text_input("Ganti Menjadi 3", placeholder="")
+    ganti4 = st.text_input("Ganti Menjadi 4", placeholder="")
+
+list_rename = [
+    (cari1, ganti1),
+    (cari2, ganti2),
+    (cari3, ganti3),
+    (cari4, ganti4)
+]
+
+st.markdown("---")
+uploaded_file = st.file_uploader(f"Unggah file KMZ ({tipe_kmz} - {format_tahapan})", type=["kmz"])
+
+if uploaded_file is not None:
+    st.info("File berhasil diunggah!")
+    
+    if st.button("🚀 Proses, Standarisasi & Filter KMZ"):
+        with st.spinner(f'Memproses {tipe_kmz} dengan format {format_tahapan}...'):
+            try:
+                temp_dir = tempfile.mkdtemp()
+                input_path = os.path.join(temp_dir, "input.kmz")
+                output_path = os.path.join(temp_dir, "output.kmz")
+                extract_dir = os.path.join(temp_dir, "extracted")
+                
+                with open(input_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                proses_kmz(input_path, output_path, extract_dir, tipe_kmz, format_tahapan, list_rename)
+                
+                with open(output_path, "rb") as f:
+                    hasil_bytes = f.read()
+                
+                pesan_sukses = f"Berhasil! KMZ diproses untuk {tipe_kmz} ({format_tahapan})."
+                if format_tahapan == "PRE ABD / ABD":
+                    pesan_sukses += " Folder-folder kosong telah dibersihkan."
+                st.success(pesan_sukses)
+                
+                nama_file_hasil = f"{format_tahapan.replace(' ', '_').replace('/', '_')}_{tipe_kmz}_{uploaded_file.name}"
+                st.download_button(
+                    label="⬇️ Download File KMZ Hasil",
+                    data=hasil_bytes,
+                    file_name=nama_file_hasil,
+                    mime="application/vnd.google-earth.kmz"
+                )
+                
+            except Exception as e:
+                st.error(f"Terjadi kesalahan: {e}")
+            finally:
+                if 'temp_dir' in locals():
+                    shutil.rmtree(temp_dir)
