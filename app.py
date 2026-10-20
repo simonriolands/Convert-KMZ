@@ -532,7 +532,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
 st.set_page_config(page_title="Universal KMZ Formatter", page_icon="🌍")
 
 st.title("🌍 Universal KMZ Auto-Formatter & Metadata Cleaner")
-st.write("Standarisasi format Cluster/Subfeeder/Feeder, pewarnaan kabel FO, Multi-Rename Massal, pembersihan metadata otomatis, dan filter folder kosong.")
 
 col_pilihan1, col_pilihan2 = st.columns(2)
 with col_pilihan1:
