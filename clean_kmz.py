@@ -53,11 +53,12 @@ def is_inside_fdt_folder(element, parent_map):
     if tag == "Folder":
       name_node = get_direct_name_node(curr)
       if name_node is not None and name_node.text:
+        # PERBAIKAN: Menggunakan .upper() alih-alih .toUpperCase()
         folder_name = (
             GHOST_REGEX.sub("", name_node.text)
             .replace("\u00A0", " ")
             .strip()
-            .toUpperCase()
+            .upper()
         )
         if folder_name == "FDT":
           return True
