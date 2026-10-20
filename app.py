@@ -53,7 +53,6 @@ def analisis_dan_bersihkan_teks(teks_asli, aktifkan_auto_trim=True):
 
     panjang_bersih = len(teks_bersih)
 
-    # Cari indeks karakter tampak pertama dan terakhir untuk menandai spasi ujung saja
     indeks_tampak = [
         i for i, ch in enumerate(teks_asli)
         if ch not in ZERO_WIDTH_MAP and not ch.isspace()
@@ -76,7 +75,6 @@ def analisis_dan_bersihkan_teks(teks_asli, aktifkan_auto_trim=True):
                 else:
                     xray_parts.append(f'[U+{ord(ch):04X}]')
             else:
-                # Spasi normal di tengah kalimat (contoh: "LINE B - FDT 01")
                 xray_parts.append(ch)
         else:
             xray_parts.append(ch)
@@ -215,7 +213,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
         return n_elem
 
     def apakah_folder_wrapper_utama(folder_elem, nama_bersih):
-        """Mendeteksi apakah folder terluar hanyalah wrapper nama Cluster/Feeder."""
         nama_up = nama_bersih.upper()
         if nama_up.startswith("LINE") or nama_up in semua_folder_standar_set or "BOUNDARY" in nama_up or "CABLE" in nama_up:
             return False
@@ -226,7 +223,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
         tag_lokal = elemen.tag.split('}')[-1]
         jejak_saat_ini = list(jejak_folder)
 
-        # 1. Jika elemen adalah Document / Folder / Placemark, periksa tag <name> miliknya
         if tag_lokal in ('Document', 'Folder', 'Placemark'):
             n_elem = get_direct_name_elem(elemen)
             nama_item_bersih = ""
@@ -236,7 +232,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                 nama_item_bersih = teks_baru
 
                 if tag_lokal == 'Folder':
-                    # Jangan masukkan wrapper utama ke jejak path jika di dalamnya ada subfolder LINE/standar
                     if len(jejak_saat_ini) == 0 and apakah_folder_wrapper_utama(elemen, nama_item_bersih):
                         path_tampil = nama_item_bersih
                     else:
@@ -259,7 +254,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
             else:
                 path_tampil = " / ".join(jejak_saat_ini) if jejak_saat_ini else tag_lokal
 
-            # Periksa atribut pada Folder/Placemark (misal id="...")
             for attr_k, attr_v in list(elemen.attrib.items()):
                 attr_nama = attr_k.split('}')[-1]
                 val_baru, info_attr = analisis_dan_bersihkan_teks(attr_v, aktifkan_auto_trim=True)
@@ -274,15 +268,12 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                         "Jenis Temuan": info_attr["jenis"]
                     })
 
-            # Jika ini Placemark, gunakan path lengkap hingga nama Placemark untuk mengecek isi ExtendedData-nya
             jejak_untuk_anak = (jejak_saat_ini + [nama_item_bersih]) if (tag_lokal == 'Placemark' and nama_item_bersih) else jejak_saat_ini
 
         else:
-            # 2. Untuk elemen selain Document/Folder/Placemark (seperti SimpleData, Data, value, Schema, dll.)
             path_tampil = " / ".join(jejak_saat_ini) if jejak_saat_ini else "Root"
             jejak_untuk_anak = jejak_saat_ini
 
-            # Periksa atribut pada elemen (misal <SimpleData name="..."> atau <Data name="...">)
             for attr_k, attr_v in list(elemen.attrib.items()):
                 attr_nama = attr_k.split('}')[-1]
                 val_baru, info_attr = analisis_dan_bersihkan_teks(attr_v, aktifkan_auto_trim=True)
@@ -297,7 +288,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                         "Jenis Temuan": info_attr["jenis"]
                     })
 
-            # Periksa teks pada SimpleData, value, displayName, atau tag lainnya
             if tag_lokal in ('SimpleData', 'value', 'displayName'):
                 if elemen.text is not None:
                     nama_attr = elemen.attrib.get('name', '')
@@ -314,7 +304,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                             "Jenis Temuan": info_teks["jenis"]
                         })
             elif tag_lokal != 'name' and elemen.text is not None:
-                # Untuk tag lain (seperti description/styleUrl/coordinates), sapu bersih Zero-Width tanpa merusak format multiline
                 teks_baru, info_zw = analisis_dan_bersihkan_teks(elemen.text, aktifkan_auto_trim=False)
                 elemen.text = teks_baru
                 if info_zw:
@@ -327,7 +316,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                         "Jenis Temuan": info_zw["jenis"]
                     })
 
-        # Rekursi ke seluruh elemen anak
         for anak in list(elemen):
             telusuri_dan_sapu_bersih(anak, jejak_untuk_anak)
 
@@ -335,7 +323,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
 
     # Fungsi helper Multi Rename
     def terapkan_rename(teks):
-        if not teks:
+        if not teks or not list_rename:
             return teks
         for cari, ganti in list_rename:
             if cari and cari.strip():
@@ -510,7 +498,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
 
             nama_placemark_elem = get_direct_name_elem(placemark)
             if nama_placemark_elem is not None and nama_placemark_elem.text:
-                # Auto-trim sudah berjalan di Tahap 1.5, lanjutkan dengan Multi Rename
                 teks_nama = terapkan_rename(nama_placemark_elem.text.strip())
                 
                 if kategori_efektif in target_hapus_spasi:
@@ -737,27 +724,36 @@ hapus_metadata_opt = st.checkbox(
     value=True
 )
 
-st.markdown("---")
-st.subheader("✏️ Fitur Multi Rename Massal (Find & Replace)")
-col1, col2 = st.columns(2)
-with col1:
-    cari1 = st.text_input("Cari Teks 1", placeholder="Contoh: ABCD")
-    cari2 = st.text_input("Cari Teks 2", placeholder="")
-    cari3 = st.text_input("Cari Teks 3", placeholder="")
-    cari4 = st.text_input("Cari Teks 4", placeholder="")
+# ----------------------------------------------------
+# OPSI TAMPIL / SEMBUNYIKAN FITUR MULTI RENAME MASSAL
+# ----------------------------------------------------
+gunakan_rename = st.checkbox("✏️ Gunakan Fitur Multi Rename Massal (Find & Replace)", value=False)
 
-with col2:
-    ganti1 = st.text_input("Ganti Menjadi 1", placeholder="Contoh: ABCE")
-    ganti2 = st.text_input("Ganti Menjadi 2", placeholder="")
-    ganti3 = st.text_input("Ganti Menjadi 3", placeholder="")
-    ganti4 = st.text_input("Ganti Menjadi 4", placeholder="")
+list_rename = []
+if gunakan_rename:
+    st.markdown("---")
+    st.subheader("✏️ Fitur Multi Rename Massal (Find & Replace)")
+    st.write("Masukkan teks lama yang ingin dicari dan teks penggantinya pada 4 slot di bawah ini secara bersamaan:")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        cari1 = st.text_input("Cari Teks 1", placeholder="Contoh: ABCD")
+        cari2 = st.text_input("Cari Teks 2", placeholder="")
+        cari3 = st.text_input("Cari Teks 3", placeholder="")
+        cari4 = st.text_input("Cari Teks 4", placeholder="")
 
-list_rename = [
-    (cari1, ganti1),
-    (cari2, ganti2),
-    (cari3, ganti3),
-    (cari4, ganti4)
-]
+    with col2:
+        ganti1 = st.text_input("Ganti Menjadi 1", placeholder="Contoh: ABCE")
+        ganti2 = st.text_input("Ganti Menjadi 2", placeholder="")
+        ganti3 = st.text_input("Ganti Menjadi 3", placeholder="")
+        ganti4 = st.text_input("Ganti Menjadi 4", placeholder="")
+
+    list_rename = [
+        (cari1, ganti1),
+        (cari2, ganti2),
+        (cari3, ganti3),
+        (cari4, ganti4)
+    ]
 
 st.markdown("---")
 uploaded_file = st.file_uploader(f"Unggah file KMZ ({tipe_kmz} - {format_tahapan})", type=["kmz"])
@@ -787,7 +783,6 @@ if uploaded_file is not None:
                 
                 st.success(f"Berhasil! KMZ telah distandarisasi untuk {tipe_kmz} ({format_tahapan}).")
 
-                # Tampilkan Tabel Laporan X-Ray Karakter Siluman & Auto-Trim
                 st.subheader("🔬 Laporan X-Ray Karakter Siluman & Spasi Ujung (Auto-Trim)")
                 if laporan_xray:
                     st.warning(f"Ditemukan dan dibersihkan **{len(laporan_xray)}** item yang mengandung karakter tak terlihat (Zero-Width) atau spasi ujung.")
