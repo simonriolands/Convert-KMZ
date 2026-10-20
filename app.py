@@ -6,6 +6,17 @@ import xml.etree.ElementTree as ET
 import copy
 import tempfile
 import re
+import pandas as pd
+
+# Peta karakter tak terlihat (Zero-Width Characters)
+ZERO_WIDTH_MAP = {
+    '\u200b': '[U+200B]',  # Zero-Width Space
+    '\u200c': '[U+200C]',  # Zero-Width Non-Joiner
+    '\u200d': '[U+200D]',  # Zero-Width Joiner
+    '\ufeff': '[U+FEFF]',  # Byte Order Mark (BOM)
+    '\u2060': '[U+2060]',  # Word Joiner
+}
+ZW_REGEX = re.compile(r'[\u200b\u200c\u200d\ufeff\u2060]')
 
 def hex_to_kml_color(hex_color):
     if not hex_color or str(hex_color).strip() == "":
@@ -18,7 +29,75 @@ def hex_to_kml_color(hex_color):
         return f"ff{b}{g}{r}".lower()
     return hex_color
 
-def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, list_rename):
+def analisis_dan_bersihkan_teks(teks_asli, aktifkan_auto_trim=True):
+    """
+    Mendeteksi & menghapus Zero-Width Characters serta Spasi Ujung (Auto-Trim).
+    Mengembalikan (teks_bersih, dict_info_xray).
+    """
+    if teks_asli is None:
+        return None, None
+
+    panjang_asli = len(teks_asli)
+    ada_zw = bool(ZW_REGEX.search(teks_asli))
+    teks_tanpa_zw = ZW_REGEX.sub('', teks_asli)
+
+    if aktifkan_auto_trim:
+        teks_bersih = teks_tanpa_zw.strip()
+        ada_spasi_ujung = (teks_tanpa_zw != teks_bersih)
+    else:
+        teks_bersih = teks_tanpa_zw
+        ada_spasi_ujung = False
+
+    if not ada_zw and not ada_spasi_ujung:
+        return teks_asli, None
+
+    panjang_bersih = len(teks_bersih)
+
+    # Cari indeks karakter tampak pertama dan terakhir untuk menandai spasi ujung saja
+    indeks_tampak = [
+        i for i, ch in enumerate(teks_asli)
+        if ch not in ZERO_WIDTH_MAP and not ch.isspace()
+    ]
+    idx_awal = indeks_tampak[0] if indeks_tampak else len(teks_asli)
+    idx_akhir = indeks_tampak[-1] if indeks_tampak else -1
+
+    xray_parts = []
+    for i, ch in enumerate(teks_asli):
+        if ch in ZERO_WIDTH_MAP:
+            xray_parts.append(ZERO_WIDTH_MAP[ch])
+        elif ch.isspace():
+            if aktifkan_auto_trim and (i < idx_awal or i > idx_akhir):
+                if ch == ' ':
+                    xray_parts.append('[SPASI]')
+                elif ch == '\t':
+                    xray_parts.append('[TAB]')
+                elif ch in ('\r', '\n'):
+                    xray_parts.append('[ENTER]')
+                else:
+                    xray_parts.append(f'[U+{ord(ch):04X}]')
+            else:
+                # Spasi normal di tengah kalimat (contoh: "LINE B - FDT 01")
+                xray_parts.append(ch)
+        else:
+            xray_parts.append(ch)
+
+    visual_xray = "".join(xray_parts)
+
+    jenis_temuan = []
+    if ada_zw:
+        kode_unik = sorted(list({ZERO_WIDTH_MAP[c] for c in teks_asli if c in ZERO_WIDTH_MAP}))
+        jenis_temuan.append(f"Zero-Width {' '.join(kode_unik)}")
+    if ada_spasi_ujung:
+        jenis_temuan.append("Spasi Ujung (Auto-Trim)")
+
+    return teks_bersih, {
+        "xray": visual_xray,
+        "bersih": teks_bersih,
+        "rincian": f"{panjang_asli} karakter, tampak {panjang_bersih}",
+        "jenis": " + ".join(jenis_temuan)
+    }
+
+def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, list_rename, hapus_metadata=True):
     # ==========================================
     # 1. KONFIGURASI FOLDER STANDAR BERDASARKAN TIPE
     # ==========================================
@@ -63,6 +142,8 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
         "NEW POLE 7-5", "NEW POLE 9-4", "NEW POLE 9-5", "SLACK HANGER"
     ]
 
+    semua_folder_standar_set = set(daftar_folder_standar + ["BOUNDARY CLUSTER", "FDT"])
+
     with zipfile.ZipFile(input_path, 'r') as kmz:
         kmz.extractall(extract_dir)
 
@@ -78,7 +159,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     if not file_kml:
         raise Exception("File KML tidak ditemukan di dalam KMZ.")
 
-    with open(file_kml, 'r', encoding='utf-8') as f:
+    with open(file_kml, 'r', encoding='utf-8-sig') as f:
         kml_data = f.read()
 
     namespaces_wajib = [
@@ -102,8 +183,9 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
         
         if new_kml_tag != kml_tag:
             kml_data = kml_data.replace(kml_tag, new_kml_tag)
-            with open(file_kml, 'w', encoding='utf-8') as f:
-                f.write(kml_data)
+
+    with open(file_kml, 'w', encoding='utf-8') as f:
+        f.write(kml_data)
 
     namespace_kml = "http://www.opengis.net/kml/2.2"
     namespace_gx = "http://www.google.com/kml/ext/2.2"
@@ -121,6 +203,136 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     if document_elem is None:
         document_elem = ET.SubElement(root, '{%s}Document' % namespace_kml)
 
+    # ==========================================
+    # 1.5 SAPU BERSIH ZERO-WIDTH, AUTO-TRIM & AUDIT X-RAY
+    # ==========================================
+    laporan_xray = []
+
+    def get_direct_name_elem(elem):
+        n_elem = elem.find('kml:name', ns)
+        if n_elem is None:
+            n_elem = elem.find('name')
+        return n_elem
+
+    def apakah_folder_wrapper_utama(folder_elem, nama_bersih):
+        """Mendeteksi apakah folder terluar hanyalah wrapper nama Cluster/Feeder."""
+        nama_up = nama_bersih.upper()
+        if nama_up.startswith("LINE") or nama_up in semua_folder_standar_set or "BOUNDARY" in nama_up or "CABLE" in nama_up:
+            return False
+        punya_subfolder = any(c.tag.split('}')[-1] == 'Folder' for c in folder_elem)
+        return punya_subfolder
+
+    def telusuri_dan_sapu_bersih(elemen, jejak_folder):
+        tag_lokal = elemen.tag.split('}')[-1]
+        jejak_saat_ini = list(jejak_folder)
+
+        # 1. Jika elemen adalah Document / Folder / Placemark, periksa tag <name> miliknya
+        if tag_lokal in ('Document', 'Folder', 'Placemark'):
+            n_elem = get_direct_name_elem(elemen)
+            nama_item_bersih = ""
+            if n_elem is not None and n_elem.text is not None:
+                teks_baru, info = analisis_dan_bersihkan_teks(n_elem.text, aktifkan_auto_trim=True)
+                n_elem.text = teks_baru
+                nama_item_bersih = teks_baru
+
+                if tag_lokal == 'Folder':
+                    # Jangan masukkan wrapper utama ke jejak path jika di dalamnya ada subfolder LINE/standar
+                    if len(jejak_saat_ini) == 0 and apakah_folder_wrapper_utama(elemen, nama_item_bersih):
+                        path_tampil = nama_item_bersih
+                    else:
+                        jejak_saat_ini.append(nama_item_bersih)
+                        path_tampil = " / ".join(jejak_saat_ini)
+                elif tag_lokal == 'Placemark':
+                    path_tampil = " / ".join(jejak_saat_ini + [nama_item_bersih]) if jejak_saat_ini else nama_item_bersih
+                else:
+                    path_tampil = nama_item_bersih or "Document"
+
+                if info:
+                    laporan_xray.append({
+                        "Jalur Folder (Folder Path)": path_tampil,
+                        "Elemen": f"{tag_lokal} (<name>)",
+                        "X-Ray Karakter Siluman": info["xray"],
+                        "Hasil Bersih": info["bersih"],
+                        "Rincian Karakter": info["rincian"],
+                        "Jenis Temuan": info["jenis"]
+                    })
+            else:
+                path_tampil = " / ".join(jejak_saat_ini) if jejak_saat_ini else tag_lokal
+
+            # Periksa atribut pada Folder/Placemark (misal id="...")
+            for attr_k, attr_v in list(elemen.attrib.items()):
+                attr_nama = attr_k.split('}')[-1]
+                val_baru, info_attr = analisis_dan_bersihkan_teks(attr_v, aktifkan_auto_trim=True)
+                elemen.attrib[attr_k] = val_baru
+                if info_attr:
+                    laporan_xray.append({
+                        "Jalur Folder (Folder Path)": path_tampil,
+                        "Elemen": f"{tag_lokal} (atribut {attr_nama})",
+                        "X-Ray Karakter Siluman": info_attr["xray"],
+                        "Hasil Bersih": info_attr["bersih"],
+                        "Rincian Karakter": info_attr["rincian"],
+                        "Jenis Temuan": info_attr["jenis"]
+                    })
+
+            # Jika ini Placemark, gunakan path lengkap hingga nama Placemark untuk mengecek isi ExtendedData-nya
+            jejak_untuk_anak = (jejak_saat_ini + [nama_item_bersih]) if (tag_lokal == 'Placemark' and nama_item_bersih) else jejak_saat_ini
+
+        else:
+            # 2. Untuk elemen selain Document/Folder/Placemark (seperti SimpleData, Data, value, Schema, dll.)
+            path_tampil = " / ".join(jejak_saat_ini) if jejak_saat_ini else "Root"
+            jejak_untuk_anak = jejak_saat_ini
+
+            # Periksa atribut pada elemen (misal <SimpleData name="..."> atau <Data name="...">)
+            for attr_k, attr_v in list(elemen.attrib.items()):
+                attr_nama = attr_k.split('}')[-1]
+                val_baru, info_attr = analisis_dan_bersihkan_teks(attr_v, aktifkan_auto_trim=True)
+                elemen.attrib[attr_k] = val_baru
+                if info_attr:
+                    laporan_xray.append({
+                        "Jalur Folder (Folder Path)": path_tampil,
+                        "Elemen": f"{tag_lokal} (atribut {attr_nama})",
+                        "X-Ray Karakter Siluman": info_attr["xray"],
+                        "Hasil Bersih": info_attr["bersih"],
+                        "Rincian Karakter": info_attr["rincian"],
+                        "Jenis Temuan": info_attr["jenis"]
+                    })
+
+            # Periksa teks pada SimpleData, value, displayName, atau tag lainnya
+            if tag_lokal in ('SimpleData', 'value', 'displayName'):
+                if elemen.text is not None:
+                    nama_attr = elemen.attrib.get('name', '')
+                    label_elemen = f"{tag_lokal} [{nama_attr}]" if nama_attr else tag_lokal
+                    teks_baru, info_teks = analisis_dan_bersihkan_teks(elemen.text, aktifkan_auto_trim=True)
+                    elemen.text = teks_baru
+                    if info_teks:
+                        laporan_xray.append({
+                            "Jalur Folder (Folder Path)": path_tampil,
+                            "Elemen": label_elemen,
+                            "X-Ray Karakter Siluman": info_teks["xray"],
+                            "Hasil Bersih": info_teks["bersih"],
+                            "Rincian Karakter": info_teks["rincian"],
+                            "Jenis Temuan": info_teks["jenis"]
+                        })
+            elif tag_lokal != 'name' and elemen.text is not None:
+                # Untuk tag lain (seperti description/styleUrl/coordinates), sapu bersih Zero-Width tanpa merusak format multiline
+                teks_baru, info_zw = analisis_dan_bersihkan_teks(elemen.text, aktifkan_auto_trim=False)
+                elemen.text = teks_baru
+                if info_zw:
+                    laporan_xray.append({
+                        "Jalur Folder (Folder Path)": path_tampil,
+                        "Elemen": f"{tag_lokal}",
+                        "X-Ray Karakter Siluman": info_zw["xray"],
+                        "Hasil Bersih": info_zw["bersih"],
+                        "Rincian Karakter": info_zw["rincian"],
+                        "Jenis Temuan": info_zw["jenis"]
+                    })
+
+        # Rekursi ke seluruh elemen anak
+        for anak in list(elemen):
+            telusuri_dan_sapu_bersih(anak, jejak_untuk_anak)
+
+    telusuri_dan_sapu_bersih(root, [])
+
     # Fungsi helper Multi Rename
     def terapkan_rename(teks):
         if not teks:
@@ -128,7 +340,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
         for cari, ganti in list_rename:
             if cari and cari.strip():
                 teks = teks.replace(cari.strip(), ganti.strip() if ganti else "")
-        return teks
+        return teks.strip()
 
     # ==========================================
     # 2. DEKLARASI GAYA KESELURUHAN (SHARED STYLES)
@@ -200,9 +412,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     # 2.5 MULTI RENAME FOLDER & PERBAIKAN NAMA BOUNDARY
     # ==========================================
     for folder in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
-        nama_folder_elem = folder.find('kml:name', ns)
-        if nama_folder_elem is None: nama_folder_elem = folder.find('name')
-        
+        nama_folder_elem = get_direct_name_elem(folder)
         if nama_folder_elem is not None and nama_folder_elem.text:
             nama_asli = nama_folder_elem.text.strip()
             nama_asli = terapkan_rename(nama_asli)
@@ -225,25 +435,21 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
         ])
         while curr is not None:
             if curr.tag == f'{{{namespace_kml}}}Folder' or curr.tag == 'Folder':
-                nama_elem = curr.find('kml:name', ns)
-                if nama_elem is None: nama_elem = curr.find('name')
+                nama_elem = get_direct_name_elem(curr)
                 if nama_elem is not None and nama_elem.text:
                     nama = nama_elem.text.strip().upper()
                     if nama in valid_folders or "BOUNDARY" in nama or "CABLE" in nama:
                         return nama
             curr = parent_map.get(curr)
         
-        nama_elem = folder_elem.find('kml:name', ns)
-        if nama_elem is None: nama_elem = folder_elem.find('name')
+        nama_elem = get_direct_name_elem(folder_elem)
         return nama_elem.text.strip().upper() if (nama_elem is not None and nama_elem.text) else ""
 
     # ==========================================
     # 3. PENYUSUNAN STANDAR SUBFOLDER LINE
     # ==========================================
     for folder in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
-        nama_folder_elem = folder.find('kml:name', ns)
-        if nama_folder_elem is None: nama_folder_elem = folder.find('name')
-        
+        nama_folder_elem = get_direct_name_elem(folder)
         if nama_folder_elem is not None and nama_folder_elem.text:
             nama_folder = nama_folder_elem.text.strip()
             
@@ -255,8 +461,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                 for anak in semua_elemen_anak:
                     tag_name = anak.tag.split('}')[-1]
                     if tag_name == 'Folder':
-                        sub_nama_elem = anak.find('kml:name', ns)
-                        if sub_nama_elem is None: sub_nama_elem = anak.find('name')
+                        sub_nama_elem = get_direct_name_elem(anak)
                         sub_nama = sub_nama_elem.text.strip().upper() if (sub_nama_elem is not None and sub_nama_elem.text) else ""
                         sub_folders_dict[sub_nama] = anak
                     else:
@@ -281,8 +486,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                         folder.append(sub_folders_dict[nama_target])
 
     for folder_elem in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
-        nama_f_elem = folder_elem.find('kml:name', ns)
-        if nama_f_elem is None: nama_f_elem = folder_elem.find('name')
+        nama_f_elem = get_direct_name_elem(folder_elem)
         nama_f = nama_f_elem.text.strip().upper() if (nama_f_elem is not None and nama_f_elem.text) else ""
         if "BOUNDARY" not in nama_f and "FDT" not in nama_f:
             for f_style in list(folder_elem.findall('kml:Style', ns) + folder_elem.findall('Style') + folder_elem.findall('kml:StyleMap', ns) + folder_elem.findall('StyleMap')):
@@ -299,19 +503,15 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
         is_boundary = "BOUNDARY" in kategori_efektif
         
         for placemark in folder.findall('./kml:Placemark', ns) + folder.findall('./Placemark'):
-            # Baca description terlebih dahulu khusus untuk kebutuhan identifikasi tipe FDT
             desc_elem = placemark.find('kml:description', ns)
             if desc_elem is None: 
                 desc_elem = placemark.find('description')
             desc_text = desc_elem.text.strip().upper() if desc_elem is not None and desc_elem.text else ""
 
-            nama_placemark_elem = placemark.find('kml:name', ns)
-            if nama_placemark_elem is None: 
-                nama_placemark_elem = placemark.find('name')
-            
+            nama_placemark_elem = get_direct_name_elem(placemark)
             if nama_placemark_elem is not None and nama_placemark_elem.text:
-                teks_nama = nama_placemark_elem.text.strip()
-                teks_nama = terapkan_rename(teks_nama)
+                # Auto-trim sudah berjalan di Tahap 1.5, lanjutkan dengan Multi Rename
+                teks_nama = terapkan_rename(nama_placemark_elem.text.strip())
                 
                 if kategori_efektif in target_hapus_spasi:
                     teks_nama = teks_nama.replace(" ", "")
@@ -389,7 +589,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                 elif "SHARING" in gabungan_teks_fdt: 
                     style_ref = "#shared_style_fdt_sharing"
 
-            # Terapkan style_ref dan bersihkan inline style lama (kecuali BOUNDARY)
             if style_ref and not is_boundary:
                 for tag_to_remove in ['kml:styleUrl', 'kml:Style', 'kml:StyleMap', 'styleUrl', 'Style', 'StyleMap']:
                     for elem_to_remove in list(placemark.findall(tag_to_remove, ns) + placemark.findall(tag_to_remove)):
@@ -401,17 +600,13 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     # 5. LOGIKA PENYALINAN TITIK KE SLACK HANGER
     # ==========================================
     for folder_line in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
-        nama_line_elem = folder_line.find('kml:name', ns)
-        if nama_line_elem is None: nama_line_elem = folder_line.find('name')
-        
+        nama_line_elem = get_direct_name_elem(folder_line)
         if nama_line_elem is not None and nama_line_elem.text and nama_line_elem.text.strip().upper().startswith("LINE"):
             folder_fat = None
             folder_slack = None
             
             for sub_folder in folder_line.findall('./kml:Folder', ns) + folder_line.findall('./Folder'):
-                sub_nama_elem = sub_folder.find('kml:name', ns)
-                if sub_nama_elem is None: sub_nama_elem = sub_folder.find('name')
-                
+                sub_nama_elem = get_direct_name_elem(sub_folder)
                 if sub_nama_elem is not None and sub_nama_elem.text:
                     sub_nama = sub_nama_elem.text.strip().upper()
                     if sub_nama == "FAT": folder_fat = sub_folder
@@ -449,8 +644,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                     for elem_to_remove in list(placemark_copy.findall(tag_to_remove, ns) + placemark_copy.findall(tag_to_remove)):
                         placemark_copy.remove(elem_to_remove)
 
-                nama_elem = placemark_copy.find('kml:name', ns)
-                if nama_elem is None: nama_elem = placemark_copy.find('name')
+                nama_elem = get_direct_name_elem(placemark_copy)
                 if nama_elem is None: nama_elem = ET.SubElement(placemark_copy, '{%s}name' % namespace_kml)
                 nama_elem.text = "EXT.SLACK.FDT"
 
@@ -462,12 +656,10 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     if list_placemark_template:
         berhasil_paste = False
         for folder_induk in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
-            nama_induk = folder_induk.find('kml:name', ns)
-            if nama_induk is None: nama_induk = folder_induk.find('name')
+            nama_induk = get_direct_name_elem(folder_induk)
             if nama_induk is not None and nama_induk.text and nama_induk.text.strip().upper().startswith("LINE"):
                 for folder_anak in folder_induk.findall('./kml:Folder', ns) + folder_induk.findall('./Folder'):
-                    nama_anak = folder_anak.find('kml:name', ns)
-                    if nama_anak is None: nama_anak = folder_anak.find('name')
+                    nama_anak = get_direct_name_elem(folder_anak)
                     if nama_anak is not None and nama_anak.text and nama_anak.text.strip().upper() == "SLACK HANGER":
                         for p_template in list_placemark_template:
                             folder_anak.append(copy.deepcopy(p_template))
@@ -476,30 +668,29 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
             if berhasil_paste: break
 
     # ==========================================
-    # 6. PEMBERSIHAN METADATA OTOMATIS (GLOBAL)
+    # 6. PEMBERSIHAN METADATA OTOMATIS (OPSIONAL / GLOBAL)
     # ==========================================
-    TAGS_METADATA = {
-        'description', 'snippet', 'extendeddata', 'schema', 'schemadata',
-        'metadata', 'timestamp', 'timespan', 'lookat', 'camera',
-        'address', 'phonenumber', 'addressdetails', 'author', 'link',
-        'balloonvisibility', 'region', 'viewrefreshmode', 'viewboundscale'
-    }
+    if hapus_metadata:
+        TAGS_METADATA = {
+            'description', 'snippet', 'extendeddata', 'schema', 'schemadata',
+            'metadata', 'timestamp', 'timespan', 'lookat', 'camera',
+            'address', 'phonenumber', 'addressdetails', 'author', 'link',
+            'balloonvisibility', 'region', 'viewrefreshmode', 'viewboundscale'
+        }
 
-    def hapus_metadata_rekursif(elemen):
-        tag_induk = elemen.tag.split('}')[-1].lower()
-        
-        # Hapus atribut ID/metadata bawaan GIS pada Document, Folder, dan Placemark
-        if tag_induk in {'document', 'folder', 'placemark'}:
-            elemen.attrib.clear()
+        def hapus_metadata_rekursif(elemen):
+            tag_induk = elemen.tag.split('}')[-1].lower()
+            if tag_induk in {'document', 'folder', 'placemark'}:
+                elemen.attrib.clear()
 
-        for anak in list(elemen):
-            tag_anak = anak.tag.split('}')[-1].lower()
-            if tag_anak in TAGS_METADATA:
-                elemen.remove(anak)
-            else:
-                hapus_metadata_rekursif(anak)
+            for anak in list(elemen):
+                tag_anak = anak.tag.split('}')[-1].lower()
+                if tag_anak in TAGS_METADATA:
+                    elemen.remove(anak)
+                else:
+                    hapus_metadata_rekursif(anak)
 
-    hapus_metadata_rekursif(root)
+        hapus_metadata_rekursif(root)
 
     # ==========================================
     # 7. PEMBERSIHAN FOLDER KOSONG (KHUSUS PRE ABD / ABD)
@@ -519,19 +710,21 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
 
         bersihkan_folder_kosong(root)
 
-    # Simpan sebagai doc.kml standar dan kemas ulang tanpa file sampah/metadata eksternal
     doc_kml_path = os.path.join(extract_dir, "doc.kml")
     tree.write(doc_kml_path, encoding='utf-8', xml_declaration=True)
 
     with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as new_kmz:
         new_kmz.write(doc_kml_path, "doc.kml")
 
+    return laporan_xray
+
 # ==========================================
 # ANTARMUKA WEB (STREAMLIT)
 # ==========================================
-st.set_page_config(page_title="Universal KMZ Formatter", page_icon="🌍")
+st.set_page_config(page_title="Universal KMZ Formatter & X-Ray", page_icon="🌍", layout="wide")
 
-st.title("🌍 Universal KMZ Auto-Formatter & Metadata Cleaner")
+st.title("🌍 Universal KMZ Auto-Formatter, X-Ray & Metadata Cleaner")
+st.write("Standarisasi KMZ (Cluster/Subfeeder/Feeder), **Sapu Bersih Karakter Tak Terlihat (Zero-Width)**, **X-Ray Audit Log ETL**, dan **Auto-Trim Spasi Ujung**.")
 
 col_pilihan1, col_pilihan2 = st.columns(2)
 with col_pilihan1:
@@ -539,15 +732,13 @@ with col_pilihan1:
 with col_pilihan2:
     format_tahapan = st.selectbox("📂 Format Tahapan KMZ:", ["APD", "PRE ABD / ABD"])
 
-if format_tahapan == "PRE ABD / ABD":
-    st.caption("ℹ️ Mode PRE ABD / ABD aktif: Seluruh metadata GIS dihapus dan SEMUA folder kosong di KMZ akan dihapus hingga bersih.")
-else:
-    st.caption("ℹ️ Mode APD aktif: Seluruh metadata GIS dihapus dan sub-folder standar akan di-generate sebagai template.")
+hapus_metadata_opt = st.checkbox(
+    "🧹 Hapus seluruh metadata tambahan (ExtendedData/SimpleData, Description, Kamera) setelah pemeriksaan X-Ray",
+    value=True
+)
 
 st.markdown("---")
 st.subheader("✏️ Fitur Multi Rename Massal (Find & Replace)")
-st.write("Masukkan teks lama yang ingin dicari dan teks penggantinya pada 4 slot di bawah ini secara bersamaan:")
-
 col1, col2 = st.columns(2)
 with col1:
     cari1 = st.text_input("Cari Teks 1", placeholder="Contoh: ABCD")
@@ -574,8 +765,8 @@ uploaded_file = st.file_uploader(f"Unggah file KMZ ({tipe_kmz} - {format_tahapan
 if uploaded_file is not None:
     st.info("File berhasil diunggah!")
     
-    if st.button("🚀 Proses, Bersihkan Metadata, dan Standarisasi KMZ"):
-        with st.spinner(f'Memproses & membersihkan metadata {tipe_kmz} ({format_tahapan})...'):
+    if st.button("🚀 Proses, Sapu Bersih Karakter Siluman & Standarisasi KMZ"):
+        with st.spinner(f'Memproses & memindai X-Ray karakter siluman pada {tipe_kmz} ({format_tahapan})...'):
             try:
                 temp_dir = tempfile.mkdtemp()
                 input_path = os.path.join(temp_dir, "input.kmz")
@@ -585,15 +776,25 @@ if uploaded_file is not None:
                 with open(input_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 
-                proses_kmz(input_path, output_path, extract_dir, tipe_kmz, format_tahapan, list_rename)
+                laporan_xray = proses_kmz(
+                    input_path, output_path, extract_dir,
+                    tipe_kmz, format_tahapan, list_rename,
+                    hapus_metadata=hapus_metadata_opt
+                )
                 
                 with open(output_path, "rb") as f:
                     hasil_bytes = f.read()
                 
-                pesan_sukses = f"Berhasil! KMZ diproses untuk {tipe_kmz} ({format_tahapan}) dan seluruh metadata telah dibersihkan."
-                if format_tahapan == "PRE ABD / ABD":
-                    pesan_sukses += " Seluruh folder kosong juga telah dihapus permanen."
-                st.success(pesan_sukses)
+                st.success(f"Berhasil! KMZ telah distandarisasi untuk {tipe_kmz} ({format_tahapan}).")
+
+                # Tampilkan Tabel Laporan X-Ray Karakter Siluman & Auto-Trim
+                st.subheader("🔬 Laporan X-Ray Karakter Siluman & Spasi Ujung (Auto-Trim)")
+                if laporan_xray:
+                    st.warning(f"Ditemukan dan dibersihkan **{len(laporan_xray)}** item yang mengandung karakter tak terlihat (Zero-Width) atau spasi ujung.")
+                    df_xray = pd.DataFrame(laporan_xray)
+                    st.dataframe(df_xray, use_container_width=True, hide_index=True)
+                else:
+                    st.info("✅ Bersih! Tidak ditemukan karakter siluman (U+200B, U+FEFF, dll.) maupun spasi ujung ilegal pada file KMZ ini.")
                 
                 nama_file_hasil = f"{format_tahapan.replace(' ', '_').replace('/', '_')}_{tipe_kmz}_{uploaded_file.name}"
                 st.download_button(
