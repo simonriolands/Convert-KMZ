@@ -18,6 +18,26 @@ ZERO_WIDTH_MAP = {
 }
 ZW_REGEX = re.compile(r'[\u200b\u200c\u200d\ufeff\u2060]')
 
+# Daftar URI standar untuk prefix yang sering muncul di KML / GIS / MS Office
+STANDARD_NS_URIS = {
+    'gx': 'http://www.google.com/kml/ext/2.2',
+    'kml': 'http://www.opengis.net/kml/2.2',
+    'atom': 'http://www.w3.org/2005/Atom',
+    'xal': 'urn:oasis:names:tc:ciq:xsdschema:xAL:2.0',
+    'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+    'xlink': 'http://www.w3.org/1999/xlink',
+    'gml': 'http://www.opengis.net/gml',
+    'ogr': 'http://osgeo.org/gdal',
+    'georss': 'http://www.georss.org/georss',
+    'dc': 'http://purl.org/dc/elements/1.1/',
+    'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+    'cc': 'http://creativecommons.org/ns#',
+    'svg': 'http://www.w3.org/2000/svg',
+    'o': 'urn:schemas-microsoft-com:office:office',
+    'v': 'urn:schemas-microsoft-com:vml',
+    'w': 'urn:schemas-microsoft-com:office:word',
+}
+
 def hex_to_kml_color(hex_color):
     if not hex_color or str(hex_color).strip() == "":
         return "" 
@@ -28,6 +48,50 @@ def hex_to_kml_color(hex_color):
         b = hex_color[4:6]
         return f"ff{b}{g}{r}".lower()
     return hex_color
+
+def perbaiki_namespace_dan_xml(kml_data):
+    """
+    Memperbaiki error 'unbound prefix' dengan memindai seluruh prefix tag & atribut
+    di dalam KML dan menyuntikkan deklarasi xmlns yang belum ada ke tag <kml>.
+    """
+    # 1. Hapus karakter kontrol ASCII ilegal (kecuali tab, newline, carriage return)
+    kml_data = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', kml_data)
+
+    # 2. Abaikan sementara blok CDATA dan komentar saat memindai prefix
+    data_tanpa_cdata = re.sub(r'<!\[CDATA\[.*?\]\]>', '', kml_data, flags=re.DOTALL)
+    data_tanpa_cdata = re.sub(r'<!--.*?-->', '', data_tanpa_cdata, flags=re.DOTALL)
+
+    # 3. Cari seluruh prefix pada elemen (<prefix:tag atau </prefix:tag) dan atribut (prefix:attr=)
+    prefix_elemen = re.findall(r'</?([a-zA-Z_][\w.-]*):[a-zA-Z_][\w.-]*', data_tanpa_cdata)
+    prefix_atribut = re.findall(r'\s([a-zA-Z_][\w.-]*):[a-zA-Z_][\w.-]*\s*=', data_tanpa_cdata)
+
+    semua_prefix = set(prefix_elemen + prefix_atribut + ['gx', 'kml', 'atom', 'xal', 'xsi'])
+    semua_prefix.discard('xml')
+    semua_prefix.discard('xmlns')
+
+    # 4. Pastikan tag <kml ...> memiliki xmlns default dan semua xmlns:prefix yang terpakai
+    kml_match = re.search(r'<kml\b([^>]*)>', kml_data, flags=re.IGNORECASE | re.DOTALL)
+    if kml_match:
+        atribut_kml = kml_match.group(1)
+        tambahan_ns = []
+
+        # Tambahkan namespace utama jika belum ada xmlns="..."
+        if not re.search(r'\bxmlns\s*=', atribut_kml, flags=re.IGNORECASE):
+            tambahan_ns.append('xmlns="http://www.opengis.net/kml/2.2"')
+
+        for prefix in sorted(semua_prefix):
+            pola_cek = rf'\bxmlns:{re.escape(prefix)}\s*='
+            if not re.search(pola_cek, atribut_kml, flags=re.IGNORECASE):
+                uri = STANDARD_NS_URIS.get(prefix, f"http://www.google.com/kml/ext/custom/{prefix}")
+                tambahan_ns.append(f'xmlns:{prefix}="{uri}"')
+                ET.register_namespace(prefix, uri)
+
+        if tambahan_ns:
+            str_tambahan = " " + " ".join(tambahan_ns)
+            tag_kml_baru = f"<kml{atribut_kml}{str_tambahan}>"
+            kml_data = kml_data[:kml_match.start()] + tag_kml_baru + kml_data[kml_match.end():]
+
+    return kml_data
 
 def analisis_dan_bersihkan_teks(teks_asli, aktifkan_auto_trim=True):
     """
@@ -157,40 +221,23 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     if not file_kml:
         raise Exception("File KML tidak ditemukan di dalam KMZ.")
 
-    with open(file_kml, 'r', encoding='utf-8-sig') as f:
+    with open(file_kml, 'r', encoding='utf-8-sig', errors='replace') as f:
         kml_data = f.read()
-
-    namespaces_wajib = [
-        ('xmlns:gx', '"http://www.google.com/kml/ext/2.2"'),
-        ('xmlns:kml', '"http://www.opengis.net/kml/2.2"'),
-        ('xmlns:atom', '"http://www.w3.org/2005/Atom"'),
-        ('xmlns:xal', '"urn:oasis:names:tc:ciq:xsdschema:xAL:2.0"'),
-        ('xmlns:xsi', '"http://www.w3.org/2001/XMLSchema-instance"')
-    ]
-
-    kml_tag_match = re.search(r'<kml[^>]*>', kml_data)
-    if kml_tag_match:
-        kml_tag = kml_tag_match.group(0)
-        new_kml_tag = kml_tag
-        if '<kml>' in new_kml_tag:
-            new_kml_tag = new_kml_tag.replace('<kml>', '<kml >')
-        
-        for ns_prefix, url in namespaces_wajib:
-            if ns_prefix not in new_kml_tag:
-                new_kml_tag = new_kml_tag.replace('<kml ', f'<kml {ns_prefix}={url} ')
-        
-        if new_kml_tag != kml_tag:
-            kml_data = kml_data.replace(kml_tag, new_kml_tag)
-
-    with open(file_kml, 'w', encoding='utf-8') as f:
-        f.write(kml_data)
 
     namespace_kml = "http://www.opengis.net/kml/2.2"
     namespace_gx = "http://www.google.com/kml/ext/2.2"
     ET.register_namespace('', namespace_kml)
     ET.register_namespace('gx', namespace_gx)
     ET.register_namespace('atom', "http://www.w3.org/2005/Atom")
+    ET.register_namespace('xal', "urn:oasis:names:tc:ciq:xsdschema:xAL:2.0")
+    ET.register_namespace('xsi', "http://www.w3.org/2001/XMLSchema-instance")
     ns = {'kml': namespace_kml, 'gx': namespace_gx}
+
+    # Perbaiki semua unbound prefix dan karakter ilegal secara otomatis
+    kml_data = perbaiki_namespace_dan_xml(kml_data)
+
+    with open(file_kml, 'w', encoding='utf-8') as f:
+        f.write(kml_data)
     
     tree = ET.parse(file_kml)
     root = tree.getroot()
@@ -724,9 +771,6 @@ hapus_metadata_opt = st.checkbox(
     value=True
 )
 
-# ----------------------------------------------------
-# OPSI TAMPIL / SEMBUNYIKAN FITUR MULTI RENAME MASSAL
-# ----------------------------------------------------
 gunakan_rename = st.checkbox("✏️ Gunakan Fitur Multi Rename Massal (Find & Replace)", value=False)
 
 list_rename = []
