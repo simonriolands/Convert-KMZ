@@ -54,14 +54,11 @@ def perbaiki_namespace_dan_xml(kml_data):
     Memperbaiki error 'unbound prefix' dengan memindai seluruh prefix tag & atribut
     di dalam KML dan menyuntikkan deklarasi xmlns yang belum ada ke tag <kml>.
     """
-    # 1. Hapus karakter kontrol ASCII ilegal (kecuali tab, newline, carriage return)
     kml_data = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', kml_data)
 
-    # 2. Abaikan sementara blok CDATA dan komentar saat memindai prefix
     data_tanpa_cdata = re.sub(r'<!\[CDATA\[.*?\]\]>', '', kml_data, flags=re.DOTALL)
     data_tanpa_cdata = re.sub(r'<!--.*?-->', '', data_tanpa_cdata, flags=re.DOTALL)
 
-    # 3. Cari seluruh prefix pada elemen (<prefix:tag atau </prefix:tag) dan atribut (prefix:attr=)
     prefix_elemen = re.findall(r'</?([a-zA-Z_][\w.-]*):[a-zA-Z_][\w.-]*', data_tanpa_cdata)
     prefix_atribut = re.findall(r'\s([a-zA-Z_][\w.-]*):[a-zA-Z_][\w.-]*\s*=', data_tanpa_cdata)
 
@@ -69,13 +66,11 @@ def perbaiki_namespace_dan_xml(kml_data):
     semua_prefix.discard('xml')
     semua_prefix.discard('xmlns')
 
-    # 4. Pastikan tag <kml ...> memiliki xmlns default dan semua xmlns:prefix yang terpakai
     kml_match = re.search(r'<kml\b([^>]*)>', kml_data, flags=re.IGNORECASE | re.DOTALL)
     if kml_match:
         atribut_kml = kml_match.group(1)
         tambahan_ns = []
 
-        # Tambahkan namespace utama jika belum ada xmlns="..."
         if not re.search(r'\bxmlns\s*=', atribut_kml, flags=re.IGNORECASE):
             tambahan_ns.append('xmlns="http://www.opengis.net/kml/2.2"')
 
@@ -189,6 +184,14 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
             "NEW POLE 7-5", "NEW POLE 7-4", "NEW POLE 9-5", "NEW POLE 9-4", 
             "JOINT CLOSURE", "SLACK HANGER"
         ]
+    elif jenis_kmz == "FWA":
+        daftar_folder_standar = [
+            "METRO", "FDT", "FAT", "CABLE",
+            "EXISTING POLE EMR 7-3", "EXISTING POLE EMR 7-4", "EXISTING POLE EMR 9-4",
+            "EXISTING POLE PARTNER 7-4", "EXISTING POLE PARTNER 9-4",
+            "NEW POLE 7-3", "NEW POLE 7-4", "NEW POLE 9-4",
+            "JOINT CLOSURE", "SLACK HANGER"
+        ]
 
     folder_existing_pole = [
         "EXISTING POLE EMR 7-2.5", "EXISTING POLE EMR 7-3", "EXISTING POLE EMR 7-4", "EXISTING POLE EMR 7-5",
@@ -197,14 +200,15 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     ]
 
     target_hapus_spasi = [
-        "BOUNDARY FAT", "EXISTING POLE EMR 7-2.5", "EXISTING POLE EMR 7-3", 
-        "EXISTING POLE EMR 7-4", "EXISTING POLE EMR 7-5", "EXISTING POLE EMR 9-4", 
-        "EXISTING POLE EMR 9-5", "EXISTING POLE PARTNER 7-4", "EXISTING POLE PARTNER 9-4", 
+        "METRO", "OLT", "BOUNDARY FAT", 
+        "EXISTING POLE EMR 7-2.5", "EXISTING POLE EMR 7-3", "EXISTING POLE EMR 7-4", 
+        "EXISTING POLE EMR 7-5", "EXISTING POLE EMR 9-4", "EXISTING POLE EMR 9-5", 
+        "EXISTING POLE PARTNER 7-4", "EXISTING POLE PARTNER 9-4", 
         "FAT", "FDT", "NEW POLE 7-2.5", "NEW POLE 7-3", "NEW POLE 7-4", 
         "NEW POLE 7-5", "NEW POLE 9-4", "NEW POLE 9-5", "SLACK HANGER"
     ]
 
-    semua_folder_standar_set = set(daftar_folder_standar + ["BOUNDARY CLUSTER", "FDT"])
+    semua_folder_standar_set = set(daftar_folder_standar + ["BOUNDARY CLUSTER", "FDT", "METRO", "OLT"])
 
     with zipfile.ZipFile(input_path, 'r') as kmz:
         kmz.extractall(extract_dir)
@@ -233,7 +237,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     ET.register_namespace('xsi', "http://www.w3.org/2001/XMLSchema-instance")
     ns = {'kml': namespace_kml, 'gx': namespace_gx}
 
-    # Perbaiki semua unbound prefix dan karakter ilegal secara otomatis
     kml_data = perbaiki_namespace_dan_xml(kml_data)
 
     with open(file_kml, 'w', encoding='utf-8') as f:
@@ -409,26 +412,33 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
             ET.SubElement(line_style, '{%s}color' % namespace_kml).text = hex_to_kml_color(warna_garis)
         ET.SubElement(line_style, '{%s}width' % namespace_kml).text = ketebalan
 
+    # Styles untuk FAT & Homepass
     buat_shared_style("shared_style_FAT", "#FFFF00", "#FFFF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/triangle.png", hide_balloon=True)
     buat_shared_style("shared_style_HP_COVER", "#00FF00", "#00FF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/homegardenbusiness.png", hide_balloon=True)
     buat_shared_style("shared_style_HP_UNCOVER", "#FF0000", "#FF0000", "0.8", "http://maps.google.com/mapfiles/kml/shapes/homegardenbusiness.png", hide_balloon=True)
     
+    # Styles untuk OLT, METRO & Joint Closure (Termasuk JC 24 Core untuk FWA)
     buat_shared_style("style_olt", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/ranger_station.png", hide_balloon=True)
+    buat_shared_style("style_metro", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/ranger_station.png", hide_balloon=True)
+    buat_shared_style("style_jc_24", "#00FF00", "#00FF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/forbidden.png", hide_balloon=True)
     buat_shared_style("style_jc_48", "#AA00FF", "#AA00FF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/forbidden.png", hide_balloon=True)
     buat_shared_style("style_jc_144", "#FFFF00", "#FFFF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/forbidden.png", hide_balloon=True)
     buat_shared_style("style_jc_288", "#FFAA00", "#FFAA00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/forbidden.png", hide_balloon=True)
     buat_shared_style("style_jc_ext", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/forbidden.png", hide_balloon=True)
     
+    # Styles untuk Slack Hanger
     buat_shared_style("style_slack_ext", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/target.png", hide_balloon=True)
     buat_shared_style("style_slack_new", "#FF0000", "#FF0000", "0.8", "http://maps.google.com/mapfiles/kml/shapes/target.png", hide_balloon=True)
     buat_shared_style("shared_style_slack_hanger_copy", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/target.png", hide_balloon=True)
     
+    # Styles untuk Pole (Tiang)
     buat_shared_style("style_pole_ext", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png", hide_balloon=True)
     buat_shared_style("style_pole_new_green", "#00FF00", "#00FF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png", hide_balloon=True)
     buat_shared_style("style_pole_new_red", "#FF0000", "#FF0000", "0.8", "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png", hide_balloon=True)
     buat_shared_style("style_pole_new_purple", "#AA00FF", "#AA00FF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png", hide_balloon=True)
     buat_shared_style("style_pole_new_cyan", "#00FFFF", "#00FFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png", hide_balloon=True)
 
+    # Styles untuk Kabel & Sling Wire
     buat_shared_line_style("style_cable_24", "#00FF00", "3.0", hide_balloon=True)
     buat_shared_line_style("style_cable_36", "#FF00FF", "3.0", hide_balloon=True)
     buat_shared_line_style("style_cable_48", "#AA00FF", "3.0", hide_balloon=True)
@@ -437,6 +447,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     buat_shared_line_style("style_cable_288", "#FFAA00", "3.0", hide_balloon=True)
     buat_shared_line_style("shared_style_sling_wire", "#00FFFF", "3.0", hide_balloon=True)
 
+    # Styles untuk FDT
     cross_hair_icon = "http://maps.google.com/mapfiles/kml/shapes/cross-hairs.png"
     buat_shared_style("shared_style_fdt_96c", "#FF0000", "#FF0000", "0.8", cross_hair_icon, hide_balloon=True)
     buat_shared_style("shared_style_fdt_72c", "#550000", "#550000", "0.8", cross_hair_icon, hide_balloon=True)
@@ -462,11 +473,11 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     def get_kategori(folder_elem):
         curr = folder_elem
         valid_folders = set([
-            "BOUNDARY FAT", "FAT", "FDT", "HP COVER", "HP UNCOVER", 
+            "METRO", "OLT", "BOUNDARY FAT", "FAT", "FDT", "HP COVER", "HP UNCOVER", 
             "EXISTING POLE EMR 7-2.5", "EXISTING POLE EMR 7-3", "EXISTING POLE EMR 7-4", "EXISTING POLE EMR 7-5", 
             "EXISTING POLE EMR 9-4", "EXISTING POLE EMR 9-5", "EXISTING POLE PARTNER 7-4", "EXISTING POLE PARTNER 9-4", 
             "NEW POLE 7-2.5", "NEW POLE 7-3", "NEW POLE 7-4", "NEW POLE 7-5", "NEW POLE 9-4", "NEW POLE 9-5", 
-            "DISTRIBUTION CABLE", "CABLE", "SLACK HANGER", "SLING WIRE", "OLT", "JOINT CLOSURE"
+            "DISTRIBUTION CABLE", "CABLE", "SLACK HANGER", "SLING WIRE", "JOINT CLOSURE"
         ])
         while curr is not None:
             if curr.tag == f'{{{namespace_kml}}}Folder' or curr.tag == 'Folder':
@@ -481,44 +492,70 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
         return nama_elem.text.strip().upper() if (nama_elem is not None and nama_elem.text) else ""
 
     # ==========================================
-    # 3. PENYUSUNAN STANDAR SUBFOLDER LINE
+    # 3. PENYUSUNAN & PENGURUTAN STANDAR SUBFOLDER
     # ==========================================
+    def susun_subfolder_standar(container_elem):
+        semua_elemen_anak = list(container_elem)
+        sub_folders_dict = {}
+        folder_ekstra = []
+        elemen_lainnya = []
+        
+        for anak in semua_elemen_anak:
+            tag_name = anak.tag.split('}')[-1]
+            if tag_name == 'Folder':
+                sub_nama_elem = get_direct_name_elem(anak)
+                sub_nama = sub_nama_elem.text.strip().upper() if (sub_nama_elem is not None and sub_nama_elem.text) else ""
+                if sub_nama in daftar_folder_standar:
+                    sub_folders_dict[sub_nama] = anak
+                elif sub_nama == "BOUNDARY CLUSTER" or (jenis_kmz == "Cluster" and sub_nama == "FDT"):
+                    folder_ekstra.append(anak)
+            else:
+                elemen_lainnya.append(anak)
+        
+        for nama_target in daftar_folder_standar:
+            if nama_target not in sub_folders_dict:
+                if format_tahapan == "APD":
+                    folder_baru = ET.Element(f'{{{namespace_kml}}}Folder')
+                    nama_elemen_baru = ET.SubElement(folder_baru, f'{{{namespace_kml}}}name')
+                    nama_elemen_baru.text = nama_target
+                    sub_folders_dict[nama_target] = folder_baru
+        
+        for anak in semua_elemen_anak:
+            container_elem.remove(anak)
+        
+        for elemen in elemen_lainnya:
+            container_elem.append(elemen)
+        for f_eks in folder_ekstra:
+            container_elem.append(f_eks)
+        for nama_target in daftar_folder_standar:
+            if nama_target in sub_folders_dict:
+                container_elem.append(sub_folders_dict[nama_target])
+
+    ada_folder_line = False
     for folder in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
         nama_folder_elem = get_direct_name_elem(folder)
         if nama_folder_elem is not None and nama_folder_elem.text:
             nama_folder = nama_folder_elem.text.strip()
-            
             if nama_folder.upper().startswith("LINE"):
-                semua_elemen_anak = list(folder)
-                sub_folders_dict = {}
-                elemen_lainnya = []
-                
-                for anak in semua_elemen_anak:
-                    tag_name = anak.tag.split('}')[-1]
-                    if tag_name == 'Folder':
-                        sub_nama_elem = get_direct_name_elem(anak)
-                        sub_nama = sub_nama_elem.text.strip().upper() if (sub_nama_elem is not None and sub_nama_elem.text) else ""
-                        sub_folders_dict[sub_nama] = anak
-                    else:
-                        elemen_lainnya.append(anak)
-                
-                for nama_target in daftar_folder_standar:
-                    if nama_target not in sub_folders_dict:
-                        if format_tahapan == "APD":
-                            folder_baru = ET.Element(f'{{{namespace_kml}}}Folder')
-                            nama_elemen_baru = ET.SubElement(folder_baru, f'{{{namespace_kml}}}name')
-                            nama_elemen_baru.text = nama_target
-                            sub_folders_dict[nama_target] = folder_baru
-                
-                for anak in semua_elemen_anak:
-                    folder.remove(anak)
-                
-                for elemen in elemen_lainnya:
-                    folder.append(elemen)
-                
-                for nama_target in daftar_folder_standar:
-                    if nama_target in sub_folders_dict:
-                        folder.append(sub_folders_dict[nama_target])
+                ada_folder_line = True
+                susun_subfolder_standar(folder)
+
+    # Jika KMZ (khususnya FWA, Feeder, atau Subfeeder) tidak memakai folder "LINE ...",
+    # urutkan dan lengkapi folder standar langsung pada folder kontainer utamanya.
+    if not ada_folder_line and jenis_kmz in ["FWA", "Feeder", "Subfeeder"]:
+        top_folders = [c for c in document_elem if c.tag.split('}')[-1] == 'Folder']
+        if len(top_folders) == 1:
+            nama_top_elem = get_direct_name_elem(top_folders[0])
+            nama_top = nama_top_elem.text.strip().upper() if (nama_top_elem is not None and nama_top_elem.text) else ""
+            if nama_top not in daftar_folder_standar:
+                susun_subfolder_standar(top_folders[0])
+            else:
+                susun_subfolder_standar(document_elem)
+        else:
+            susun_subfolder_standar(document_elem)
+
+    # Bersihkan kembali parent_map karena ada kemungkinan elemen folder baru disusun
+    parent_map = {c: p for p in root.iter() for c in p}
 
     for folder_elem in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
         nama_f_elem = get_direct_name_elem(folder_elem)
@@ -578,7 +615,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                 style_ref = "#style_pole_ext"
 
             elif kategori_efektif.startswith("NEW POLE"):
-                if jenis_kmz == "Cluster":
+                if jenis_kmz in ["Cluster", "FWA"]:
                     if "7-2.5" in kategori_efektif: style_ref = "#style_pole_new_purple"
                     elif "7-3" in kategori_efektif: style_ref = "#style_pole_new_cyan"
                     elif "7-4" in kategori_efektif: style_ref = "#style_pole_new_green"
@@ -593,7 +630,8 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                     elif "9-5" in kategori_efektif or "9-4" in kategori_efektif: style_ref = "#style_pole_new_red"
 
             elif kategori_efektif == "JOINT CLOSURE":
-                if "48" in nama_placemark: style_ref = "#style_jc_48"
+                if "24" in nama_placemark: style_ref = "#style_jc_24"
+                elif "48" in nama_placemark: style_ref = "#style_jc_48"
                 elif "144" in nama_placemark: style_ref = "#style_jc_144"
                 elif "288" in nama_placemark: style_ref = "#style_jc_288"
                 elif "EXT" in nama_placemark or "EXISTING" in nama_placemark: style_ref = "#style_jc_ext"
@@ -605,6 +643,9 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
 
             elif kategori_efektif == "OLT":
                 style_ref = "#style_olt"
+
+            elif kategori_efektif == "METRO":
+                style_ref = "#style_metro"
 
             elif kategori_efektif == "SLING WIRE":
                 style_ref = "#shared_style_sling_wire"
@@ -620,7 +661,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                     style_ref = "#shared_style_fdt_72c"
                 elif "48C" in gabungan_teks_fdt or "48 CORE" in gabungan_teks_fdt: 
                     style_ref = "#shared_style_fdt_48c"
-                elif "SHARING" in gabungan_teks_fdt: 
+                elif any(k in gabungan_teks_fdt for k in ["SHARING", "EXT.", "EXT", "EXISTING"]): 
                     style_ref = "#shared_style_fdt_sharing"
 
             if style_ref and not is_boundary:
@@ -633,39 +674,46 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     # ==========================================
     # 5. LOGIKA PENYALINAN TITIK KE SLACK HANGER
     # ==========================================
-    for folder_line in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
-        nama_line_elem = get_direct_name_elem(folder_line)
-        if nama_line_elem is not None and nama_line_elem.text and nama_line_elem.text.strip().upper().startswith("LINE"):
-            folder_fat = None
-            folder_slack = None
-            
-            for sub_folder in folder_line.findall('./kml:Folder', ns) + folder_line.findall('./Folder'):
-                sub_nama_elem = get_direct_name_elem(sub_folder)
-                if sub_nama_elem is not None and sub_nama_elem.text:
-                    sub_nama = sub_nama_elem.text.strip().upper()
-                    if sub_nama == "FAT": folder_fat = sub_folder
-                    elif sub_nama == "SLACK HANGER": folder_slack = sub_folder
-            
-            if folder_fat is not None:
-                isi_fat = folder_fat.findall('./kml:Placemark', ns) + folder_fat.findall('./Placemark')
-                if len(isi_fat) > 0:
-                    if folder_slack is None:
-                        folder_slack = ET.Element(f'{{{namespace_kml}}}Folder')
-                        slack_name_elem = ET.SubElement(folder_slack, f'{{{namespace_kml}}}name')
-                        slack_name_elem.text = "SLACK HANGER"
-                        folder_line.append(folder_slack)
-                    
-                    isi_slack = folder_slack.findall('./kml:Placemark', ns) + folder_slack.findall('./Placemark')
-                    if len(isi_slack) == 0:
-                        for titik_fat in isi_fat:
-                            placemark_copy = copy.deepcopy(titik_fat)
-                            s_url = placemark_copy.find('kml:styleUrl', ns)
-                            if s_url is None: s_url = placemark_copy.find('styleUrl')
-                            if s_url is not None: s_url.text = "#style_slack_new"
-                            else:
-                                new_s_url = ET.SubElement(placemark_copy, '{%s}styleUrl' % namespace_kml)
-                                new_s_url.text = "#style_slack_new"
-                            folder_slack.append(placemark_copy)
+    def salin_fat_ke_slack(container_elem):
+        folder_fat = None
+        folder_slack = None
+        
+        for sub_folder in container_elem.findall('./kml:Folder', ns) + container_elem.findall('./Folder'):
+            sub_nama_elem = get_direct_name_elem(sub_folder)
+            if sub_nama_elem is not None and sub_nama_elem.text:
+                sub_nama = sub_nama_elem.text.strip().upper()
+                if sub_nama == "FAT": folder_fat = sub_folder
+                elif sub_nama == "SLACK HANGER": folder_slack = sub_folder
+        
+        if folder_fat is not None:
+            isi_fat = folder_fat.findall('./kml:Placemark', ns) + folder_fat.findall('./Placemark')
+            if len(isi_fat) > 0:
+                if folder_slack is None:
+                    folder_slack = ET.Element(f'{{{namespace_kml}}}Folder')
+                    slack_name_elem = ET.SubElement(folder_slack, f'{{{namespace_kml}}}name')
+                    slack_name_elem.text = "SLACK HANGER"
+                    container_elem.append(folder_slack)
+                
+                isi_slack = folder_slack.findall('./kml:Placemark', ns) + folder_slack.findall('./Placemark')
+                if len(isi_slack) == 0:
+                    for titik_fat in isi_fat:
+                        placemark_copy = copy.deepcopy(titik_fat)
+                        s_url = placemark_copy.find('kml:styleUrl', ns)
+                        if s_url is None: s_url = placemark_copy.find('styleUrl')
+                        if s_url is not None: s_url.text = "#style_slack_new"
+                        else:
+                            new_s_url = ET.SubElement(placemark_copy, '{%s}styleUrl' % namespace_kml)
+                            new_s_url.text = "#style_slack_new"
+                        folder_slack.append(placemark_copy)
+
+    if ada_folder_line:
+        for folder_line in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
+            nama_line_elem = get_direct_name_elem(folder_line)
+            if nama_line_elem is not None and nama_line_elem.text and nama_line_elem.text.strip().upper().startswith("LINE"):
+                salin_fat_ke_slack(folder_line)
+    else:
+        for folder_kontainer in [document_elem] + list(root.findall('.//kml:Folder', ns) + root.findall('.//Folder')):
+            salin_fat_ke_slack(folder_kontainer)
 
     list_placemark_template = []
     for folder in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
@@ -700,6 +748,15 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                         berhasil_paste = True
                         break
             if berhasil_paste: break
+
+        # Jika tidak memakai folder LINE (seperti pada FWA langsung), tempelkan ke folder SLACK HANGER yang tersedia
+        if not berhasil_paste:
+            for folder_target in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
+                nama_t = get_direct_name_elem(folder_target)
+                if nama_t is not None and nama_t.text and nama_t.text.strip().upper() == "SLACK HANGER":
+                    for p_template in list_placemark_template:
+                        folder_target.append(copy.deepcopy(p_template))
+                    break
 
     # ==========================================
     # 6. PEMBERSIHAN METADATA OTOMATIS (OPSIONAL / GLOBAL)
@@ -758,11 +815,11 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
 st.set_page_config(page_title="Universal KMZ Formatter & X-Ray", page_icon="🌍", layout="wide")
 
 st.title("🌍 Universal KMZ Auto-Formatter, X-Ray & Metadata Cleaner")
-st.write("Standarisasi KMZ (Cluster/Subfeeder/Feeder), **Sapu Bersih Karakter Tak Terlihat (Zero-Width)**, **X-Ray Audit Log ETL**, dan **Auto-Trim Spasi Ujung**.")
+st.write("Standarisasi KMZ (**Cluster / Subfeeder / Feeder / FWA**), **Sapu Bersih Karakter Tak Terlihat (Zero-Width)**, **X-Ray Audit Log ETL**, dan **Auto-Trim Spasi Ujung**.")
 
 col_pilihan1, col_pilihan2 = st.columns(2)
 with col_pilihan1:
-    tipe_kmz = st.selectbox("📌 Tipe KMZ:", ["Cluster", "Subfeeder", "Feeder"])
+    tipe_kmz = st.selectbox("📌 Tipe KMZ:", ["Cluster", "Subfeeder", "Feeder", "FWA"])
 with col_pilihan2:
     format_tahapan = st.selectbox("📂 Format Tahapan KMZ:", ["APD", "PRE ABD / ABD"])
 
