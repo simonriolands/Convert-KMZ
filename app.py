@@ -89,10 +89,6 @@ def perbaiki_namespace_dan_xml(kml_data):
     return kml_data
 
 def analisis_dan_bersihkan_teks(teks_asli, aktifkan_auto_trim=True):
-    """
-    Mendeteksi & menghapus Zero-Width Characters serta Spasi Ujung (Auto-Trim).
-    Mengembalikan (teks_bersih, dict_info_xray).
-    """
     if teks_asli is None:
         return None, None
 
@@ -111,11 +107,7 @@ def analisis_dan_bersihkan_teks(teks_asli, aktifkan_auto_trim=True):
         return teks_asli, None
 
     panjang_bersih = len(teks_bersih)
-
-    indeks_tampak = [
-        i for i, ch in enumerate(teks_asli)
-        if ch not in ZERO_WIDTH_MAP and not ch.isspace()
-    ]
+    indeks_tampak = [i for i, ch in enumerate(teks_asli) if ch not in ZERO_WIDTH_MAP and not ch.isspace()]
     idx_awal = indeks_tampak[0] if indeks_tampak else len(teks_asli)
     idx_akhir = indeks_tampak[-1] if indeks_tampak else -1
 
@@ -139,7 +131,6 @@ def analisis_dan_bersihkan_teks(teks_asli, aktifkan_auto_trim=True):
             xray_parts.append(ch)
 
     visual_xray = "".join(xray_parts)
-
     jenis_temuan = []
     if ada_zw:
         kode_unik = sorted(list({ZERO_WIDTH_MAP[c] for c in teks_asli if c in ZERO_WIDTH_MAP}))
@@ -412,12 +403,12 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
             ET.SubElement(line_style, '{%s}color' % namespace_kml).text = hex_to_kml_color(warna_garis)
         ET.SubElement(line_style, '{%s}width' % namespace_kml).text = ketebalan
 
-    # Styles untuk FAT & Homepass
+    # Styles untuk FAT & Homepass (Balon Disembunyikan Karena Tidak Ada Deskripsi)
     buat_shared_style("shared_style_FAT", "#FFFF00", "#FFFF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/triangle.png", hide_balloon=True)
     buat_shared_style("shared_style_HP_COVER", "#00FF00", "#00FF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/homegardenbusiness.png", hide_balloon=True)
     buat_shared_style("shared_style_HP_UNCOVER", "#FF0000", "#FF0000", "0.8", "http://maps.google.com/mapfiles/kml/shapes/homegardenbusiness.png", hide_balloon=True)
     
-    # Styles untuk OLT, METRO & Joint Closure
+    # Styles untuk OLT, METRO & Joint Closure (Balon Disembunyikan Karena Tidak Ada Deskripsi)
     buat_shared_style("style_olt", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/ranger_station.png", hide_balloon=True)
     buat_shared_style("style_metro", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/ranger_station.png", hide_balloon=True)
     buat_shared_style("style_jc_24", "#00FF00", "#00FF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/forbidden.png", hide_balloon=True)
@@ -426,33 +417,37 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     buat_shared_style("style_jc_288", "#FFAA00", "#FFAA00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/forbidden.png", hide_balloon=True)
     buat_shared_style("style_jc_ext", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/forbidden.png", hide_balloon=True)
     
-    # Styles untuk Slack Hanger
+    # Styles untuk Slack Hanger (Balon Disembunyikan Karena Tidak Ada Deskripsi)
     buat_shared_style("style_slack_ext", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/target.png", hide_balloon=True)
     buat_shared_style("style_slack_new", "#FF0000", "#FF0000", "0.8", "http://maps.google.com/mapfiles/kml/shapes/target.png", hide_balloon=True)
     buat_shared_style("shared_style_slack_hanger_copy", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/target.png", hide_balloon=True)
     
-    # Styles untuk Pole (Tiang)
+    # Styles untuk Pole (Tiang) (Balon Disembunyikan Karena Tidak Ada Deskripsi)
     buat_shared_style("style_pole_ext", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png", hide_balloon=True)
     buat_shared_style("style_pole_new_green", "#00FF00", "#00FF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png", hide_balloon=True)
     buat_shared_style("style_pole_new_red", "#FF0000", "#FF0000", "0.8", "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png", hide_balloon=True)
     buat_shared_style("style_pole_new_purple", "#AA00FF", "#AA00FF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png", hide_balloon=True)
     buat_shared_style("style_pole_new_cyan", "#00FFFF", "#00FFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png", hide_balloon=True)
 
-    # Styles untuk Kabel & Sling Wire
-    buat_shared_line_style("style_cable_24", "#00FF00", "3.0", hide_balloon=True)
-    buat_shared_line_style("style_cable_36", "#FF00FF", "3.0", hide_balloon=True)
-    buat_shared_line_style("style_cable_48", "#AA00FF", "3.0", hide_balloon=True)
-    buat_shared_line_style("style_cable_96", "#FF0000", "3.0", hide_balloon=True)
-    buat_shared_line_style("style_cable_144", "#FFFF00", "3.0", hide_balloon=True)
-    buat_shared_line_style("style_cable_288", "#FFAA00", "3.0", hide_balloon=True)
-    buat_shared_line_style("shared_style_sling_wire", "#00FFFF", "3.0", hide_balloon=True)
+    # =========================================================================
+    # DIUBAH: hide_balloon=False untuk CABLE dan FDT agar deskripsi bisa diklik
+    # =========================================================================
+    
+    # Styles untuk Kabel & Sling Wire (Balon AKTIF khusus CABLE)
+    buat_shared_line_style("style_cable_24", "#00FF00", "3.0", hide_balloon=False)
+    buat_shared_line_style("style_cable_36", "#FF00FF", "3.0", hide_balloon=False)
+    buat_shared_line_style("style_cable_48", "#AA00FF", "3.0", hide_balloon=False)
+    buat_shared_line_style("style_cable_96", "#FF0000", "3.0", hide_balloon=False)
+    buat_shared_line_style("style_cable_144", "#FFFF00", "3.0", hide_balloon=False)
+    buat_shared_line_style("style_cable_288", "#FFAA00", "3.0", hide_balloon=False)
+    buat_shared_line_style("shared_style_sling_wire", "#00FFFF", "3.0", hide_balloon=True) # Sling Wire tetap hide
 
-    # Styles untuk FDT
+    # Styles untuk FDT (Balon AKTIF)
     cross_hair_icon = "http://maps.google.com/mapfiles/kml/shapes/cross-hairs.png"
-    buat_shared_style("shared_style_fdt_96c", "#FF0000", "#FF0000", "0.8", cross_hair_icon, hide_balloon=True)
-    buat_shared_style("shared_style_fdt_72c", "#550000", "#550000", "0.8", cross_hair_icon, hide_balloon=True)
-    buat_shared_style("shared_style_fdt_48c", "#AA00FF", "#AA00FF", "0.8", cross_hair_icon, hide_balloon=True)
-    buat_shared_style("shared_style_fdt_sharing", "#FFFFFF", "#FFFFFF", "0.8", cross_hair_icon, hide_balloon=True)
+    buat_shared_style("shared_style_fdt_96c", "#FF0000", "#FF0000", "0.8", cross_hair_icon, hide_balloon=False)
+    buat_shared_style("shared_style_fdt_72c", "#550000", "#550000", "0.8", cross_hair_icon, hide_balloon=False)
+    buat_shared_style("shared_style_fdt_48c", "#AA00FF", "#AA00FF", "0.8", cross_hair_icon, hide_balloon=False)
+    buat_shared_style("shared_style_fdt_sharing", "#FFFFFF", "#FFFFFF", "0.8", cross_hair_icon, hide_balloon=False)
 
     # ==========================================
     # 2.5 MULTI RENAME FOLDER & PERBAIKAN NAMA BOUNDARY
