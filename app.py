@@ -417,7 +417,7 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     buat_shared_style("shared_style_HP_COVER", "#00FF00", "#00FF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/homegardenbusiness.png", hide_balloon=True)
     buat_shared_style("shared_style_HP_UNCOVER", "#FF0000", "#FF0000", "0.8", "http://maps.google.com/mapfiles/kml/shapes/homegardenbusiness.png", hide_balloon=True)
     
-    # Styles untuk OLT, METRO & Joint Closure (Termasuk JC 24 Core untuk FWA)
+    # Styles untuk OLT, METRO & Joint Closure
     buat_shared_style("style_olt", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/ranger_station.png", hide_balloon=True)
     buat_shared_style("style_metro", "#FFFFFF", "#FFFFFF", "0.8", "http://maps.google.com/mapfiles/kml/shapes/ranger_station.png", hide_balloon=True)
     buat_shared_style("style_jc_24", "#00FF00", "#00FF00", "0.8", "http://maps.google.com/mapfiles/kml/shapes/forbidden.png", hide_balloon=True)
@@ -540,8 +540,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                 ada_folder_line = True
                 susun_subfolder_standar(folder)
 
-    # Jika KMZ (khususnya FWA, Feeder, atau Subfeeder) tidak memakai folder "LINE ...",
-    # urutkan dan lengkapi folder standar langsung pada folder kontainer utamanya.
     if not ada_folder_line and jenis_kmz in ["FWA", "Feeder", "Subfeeder"]:
         top_folders = [c for c in document_elem if c.tag.split('}')[-1] == 'Folder']
         if len(top_folders) == 1:
@@ -554,7 +552,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
         else:
             susun_subfolder_standar(document_elem)
 
-    # Bersihkan kembali parent_map karena ada kemungkinan elemen folder baru disusun
     parent_map = {c: p for p in root.iter() for c in p}
 
     for folder_elem in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
@@ -749,7 +746,6 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
                         break
             if berhasil_paste: break
 
-        # Jika tidak memakai folder LINE (seperti pada FWA langsung), tempelkan ke folder SLACK HANGER yang tersedia
         if not berhasil_paste:
             for folder_target in root.findall('.//kml:Folder', ns) + root.findall('.//Folder'):
                 nama_t = get_direct_name_elem(folder_target)
@@ -762,26 +758,45 @@ def proses_kmz(input_path, output_path, extract_dir, jenis_kmz, format_tahapan, 
     # 6. PEMBERSIHAN METADATA OTOMATIS (OPSIONAL / GLOBAL)
     # ==========================================
     if hapus_metadata:
-        TAGS_METADATA = {
-            'description', 'snippet', 'extendeddata', 'schema', 'schemadata',
+        # Pisahkan 'description' dari daftar metadata umum agar bisa dikontrol spesifik
+        TAGS_METADATA_UMUM = {
+            'snippet', 'extendeddata', 'schema', 'schemadata',
             'metadata', 'timestamp', 'timespan', 'lookat', 'camera',
             'address', 'phonenumber', 'addressdetails', 'author', 'link',
             'balloonvisibility', 'region', 'viewrefreshmode', 'viewboundscale'
         }
 
-        def hapus_metadata_rekursif(elemen):
+        def hapus_metadata_rekursif(elemen, pertahankan_deskripsi=False):
             tag_induk = elemen.tag.split('}')[-1].lower()
+            
+            # Jika elemen ini adalah Folder, cek namanya untuk pewarisan status deskripsi
+            if tag_induk == 'folder':
+                nama_elem = get_direct_name_elem(elemen)
+                if nama_elem is not None and nama_elem.text:
+                    nama_folder = nama_elem.text.upper()
+                    # Cek apakah nama folder mengandung kata pengecualian
+                    if any(kata in nama_folder for kata in ["CABLE", "FDT", "BOUNDARY FAT"]):
+                        pertahankan_deskripsi = True
+
+            # Bersihkan atribut pada tag utama
             if tag_induk in {'document', 'folder', 'placemark'}:
                 elemen.attrib.clear()
 
             for anak in list(elemen):
                 tag_anak = anak.tag.split('}')[-1].lower()
-                if tag_anak in TAGS_METADATA:
+                
+                # Eksekusi penghapusan metadata
+                if tag_anak in TAGS_METADATA_UMUM:
                     elemen.remove(anak)
+                elif tag_anak == 'description':
+                    if not pertahankan_deskripsi:
+                        elemen.remove(anak)
                 else:
-                    hapus_metadata_rekursif(anak)
+                    # Lanjutkan rekursi dan teruskan status deskripsi ke anak di bawahnya
+                    hapus_metadata_rekursif(anak, pertahankan_deskripsi)
 
-        hapus_metadata_rekursif(root)
+        # Mulai hapus metadata dari level teratas
+        hapus_metadata_rekursif(root, False)
 
     # ==========================================
     # 7. PEMBERSIHAN FOLDER KOSONG (KHUSUS PRE ABD / ABD)
@@ -824,7 +839,7 @@ with col_pilihan2:
     format_tahapan = st.selectbox("📂 Format Tahapan KMZ:", ["APD", "PRE ABD / ABD"])
 
 hapus_metadata_opt = st.checkbox(
-    "🧹 Hapus seluruh metadata tambahan (ExtendedData/SimpleData, Description, Kamera) setelah pemeriksaan X-Ray",
+    "🧹 Hapus seluruh metadata tambahan (Kecuali Deskripsi untuk CABLE, FDT & BOUNDARY FAT)",
     value=True
 )
 
